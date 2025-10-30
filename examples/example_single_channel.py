@@ -1,4 +1,4 @@
-from hmp4040_controller import HMP4040PyVISA
+from hmp4040_pyvisa_v3 import HMP4040PyVISA
 
 RESOURCE = "ASRL/dev/cu.usbmodemVCP1094011::INSTR"
 
