@@ -97,3 +97,8 @@ The program will:
 
 	inst.run_multichannel_pulse(channels)
 Each channel runs independently with real-time time estimates printed before the experiment begins.
+
+## 🙌 Acknowledgments
+
+Developed with ❤️ for laboratory automation on macOS.
+Inspired by the Rohde & Schwarz SCPI and PyVISA ecosystem.
