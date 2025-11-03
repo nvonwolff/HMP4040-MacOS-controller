@@ -97,6 +97,3 @@ Logged CSVs include a small metadata header (lines starting with `#`) followed b
 
 ## Contributing
 Contributions welcome — open a PR or issue with improvements, bug reports, or device-specific command tweaks.
-
-## License
-Place your preferred license here (e.g., MIT).
