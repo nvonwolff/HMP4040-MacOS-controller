@@ -61,7 +61,7 @@ If `list_resources()` returns nothing on macOS, use the ASRL device path (e.g. `
 ## 🔌 Run Electrolysis 
 
 ## Quick Start
-  - Example scripts are in the [examples/](examples/ folder:
+  - Example scripts are in the [examples/](examples/) folder:
   - `example_single_pulse.py`: Single-channel pulsed electrolysis  
   - `run_multi_short.py`: Quick multi-channel test  
   - `run_multi_long.py`: Long autonomous multi-channel run  
