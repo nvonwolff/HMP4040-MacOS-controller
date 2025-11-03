@@ -1,104 +1,96 @@
-# HMP4040-MacOS-controller
+# HMP4040 PyVISA Controller + Examples
 
-A lightweight, Python-based controller for the **Rohde & Schwarz HMP4040** programmable power supply.  
-This project enables full instrument control, live data logging, and pulsed electrolysis experiments directly from **macOS**, using **PyVISA** and **VISA-py** backends — no Windows or LabVIEW drivers required.
+This repository contains a Python controller for the Rohde & Schwarz HMP4040 power supply using PyVISA (@py backend),
+plus example scripts for single- and multi-channel pulsed electrolysis experiments and ARB helpers.
 
----
+## Repository contents
+- `hmp4040_pyvisa_arb.py` — Main controller module (includes ARB helpers, robust single- and multi-channel pulsed experiment routines).
+- `example_single_pulse.py` — Minimal single-channel galvanostatic pulsed experiment example.
+- `run_multi_short.py` — Quick multi-channel short test (good for verifying behavior).
+- `run_multi_long.py` — Long-run (8h-oriented) multi-channel example with autosave and signal handling.
+- `test_multi_enable_debug.py` — Short debug runner that prints enable/diagnostics (use during initial verification).
+- `README.md` — This file.
 
-## 🔧 Features
-
-- Connect and control the **R&S HMP4040** via **USB** (macOS compatible)
-- Log **current**, **voltage**, and **charge** with timestamps
-- Run **pulsed electrolysis** experiments (constant-current steps)
-- Support for **multiple simultaneous channels**
-- CSV logging with **metadata headers**
-- Real-time **dual-axis plotting** (voltage & current)
-- Automatic **experiment time estimation** per channel
-- Safe output handling — auto-off after completion or interruption
-
----
-
-## 🧠 Requirements
-
-- macOS (tested on Ventura / Sonoma)
-- Python 3.10+
+## Requirements
+- macOS (tested on macOS Monterey)
+- Python 3.8+
+- `pyvisa`, `pyvisa-py`
+- `pandas`, `matplotlib`
 - USB connection to HMP4040 (via built-in VISA interface)
-- No vendor drivers required
+- (Optional) `zeroconf` if using HISLIP/TCPIP discovery.
 
-Install dependencies:
+Install dependencies with pip:
+```bash
+pip install pyvisa pyvisa-py pandas matplotlib
+pip install zeroconf  # if needed for TCPIP discovery
+pip install -r requirements.txt
+```
 
-	bash
-	pip install -r requirements.txt
+## Quick start (macOS)
+1. Ensure the PSU is connected via USB or LAN.
+```bash
+ls /dev | grep -i usb
+```
+you should see something like:
+```bash
+cu.usbmodemVCP1094011
+tty.usbmodemVCP1094011
+```
 
-## ⚙️ Setup Instructions
-### 1. Connect the HMP4040 via USB
+3. Verify device presence:
+```python
+import pyvisa
+rm = pyvisa.ResourceManager('@py')
+print(rm.list_resources())
+```
+or
+```python
+import pyvisa
 
-Plug in your instrument and check that it’s visible:
-	
-	ls /dev | grep -i usb
-You should see something like:
+rm = pyvisa.ResourceManager('@py')
+inst = rm.open_resource('ASRL/dev/cu.usbmodemVCP1094011::INSTR')
+inst.read_termination = '\n'
+inst.write_termination = '\n'
+inst.timeout = 5000
 
-	cu.usbmodemVCP1094011
-	tty.usbmodemVCP1094011
-### 2. Test communication
-Launch a Python shell or Jupyter Notebook and run:
+print(inst.query('*IDN?'))  # should print ROHDE&SCHWARZ,HMP4040,...
+```
 
-	import pyvisa
+If `list_resources()` returns nothing on macOS, use the ASRL device path (e.g. `ASRL/dev/cu.usbmodemVCP1094011::INSTR`).
 
-	rm = pyvisa.ResourceManager('@py')
-	print(rm.list_resources())
-Expected output (example):
+## 🔌 Run Electrolysis 
 
-	('ASRL/dev/cu.usbmodemVCP1094011::INSTR',)
-### 3. Connect to the instrument
+## Quick Start
+  - Example scripts are in the examples folder:
+  - `example_single_pulse.py`: Single-channel pulsed electrolysis  
+  - `run_multi_short.py`: Quick multi-channel test  
+  - `run_multi_long.py`: Long autonomous multi-channel run  
+  - `test_multi_enable_debug.py`: Output verification test
 
-	from hmp4040_pyvisa_v3 import HMP4040PyVISA
-	inst = HMP4040PyVISA('ASRL/dev/cu.usbmodemVCP1094011::INSTR')
-Expected:
+1. Run single-channel example:
+```bash
+python3 example_single_pulse.py
+```
 
-	Connected to: ROHDE&SCHWARZ,HMP4040,109401,HW50020003/SW2.70
-	
-## 🧪 Example: Single-channel logging
+2. Run a short multi-channel test (inspect LEDs and CSV output):
+```bash
+python3 run_multi_short.py
+```
 
-	df = inst.log_data(
-    channel=1,
-    duration=60,          # seconds
-    interval=0.5,         # seconds
-    experiment_name="test_run"
-	)
-Output:
-- Saves test_run_YYYYMMDD_HHMMSS.csv
-- Includes metadata and time series of voltage/current
+3. For long runs, tweak `run_multi_long.py` params (dt, autosave_interval_s) and test with inert loads first.
 
-## ⚡ Example: Pulsed electrolysis
-### Constant-current pulses with total charge limit
+## 🛟 Safety notes
+- ALWAYS test with an inert resistive load before connecting electrochemical cells.
+- Set conservative compliance values (voltage or current limits) before enabling outputs.
+- Use small `dt` only for short tests; for long runs prefer `dt >= 0.5 s` to avoid USB overload.
+- Enable `verbose_enable_debug=True` for initial verification (it prints OUTP?/SYST:ERR? diagnostics).
 
-	df = inst.run_pulsed_experiment(
-    channel=1,
-    step_current=0.5,       # Amperes
-    step_duration=2.0,      # seconds per pulse
-    rest_current=0.05,      # Amperes during rest
-    rest_duration=1.0,      # seconds
-    target_charge_C=50.0,   # Coulombs
-    experiment_name="pulse_test"
-	)
-The program will:
-- Alternate between step_current and rest_current
-- Log voltage, current, and integrated charge
-- Stop automatically once target_charge_C is reached
-- Generate a dual-axis plot and a CSV log
+## File format
+Logged CSVs include a small metadata header (lines starting with `#`) followed by CSV columns:
+`channel, time_s, voltage_V, current_A, charge_C, phase`
 
-## 🔀 Example: Multi-channel experiment
+## Contributing
+Contributions welcome — open a PR or issue with improvements, bug reports, or device-specific command tweaks.
 
-	channels = [
-    {"channel": 1, "step_current": 0.5, "rest_current": 0.05, "target_charge_C": 20},
-    {"channel": 2, "step_current": 1.0, "rest_current": 0.10, "target_charge_C": 40}
-	]
-
-	inst.run_multichannel_pulse(channels)
-Each channel runs independently with real-time time estimates printed before the experiment begins.
-
-## 🙌 Acknowledgments
-
-Developed with ❤️ for laboratory automation on macOS.
-Inspired by the Rohde & Schwarz SCPI and PyVISA ecosystem.
+## License
+Place your preferred license here (e.g., MIT).
