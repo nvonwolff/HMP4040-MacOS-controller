@@ -3,6 +3,12 @@
 This repository contains a Python controller for the Rohde & Schwarz HMP4040 power supply using PyVISA (@py backend),
 plus example scripts for single- and multi-channel pulsed electrolysis experiments and ARB helpers.
 
+➡️ Clone this repository:
+```bash
+git clone https://github.com/nvonwolff/HMP4040-MacOS-controller.git
+cd HMP4040-MacOS-controller
+```
+
 ## Repository contents
 - `hmp4040_pyvisa_arb.py` — Main controller module (includes ARB helpers, robust single- and multi-channel pulsed experiment routines).
 - `example_single_pulse.py` — Minimal single-channel galvanostatic pulsed experiment example.
