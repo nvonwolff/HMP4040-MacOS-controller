@@ -3,7 +3,7 @@
 
 Single-channel galvanostatic pulse example using HMP4040_pyvisa_v3_arb.
 """
-from hmp4040_pyvisa_v3_arb import HMP4040PyVISA
+from hmp4040_pyvisa_arb import HMP4040PyVISA
 import time
 
 RESOURCE = "ASRL/dev/cu.usbmodemVCP1094011::INSTR"  # <- change to your resource
