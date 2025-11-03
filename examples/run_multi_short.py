@@ -3,7 +3,7 @@
 
 Quick multi-channel short test (uses run_pulsed_experiment_multi).
 """
-from hmp4040_pyvisa_v3_arb import HMP4040PyVISA
+from hmp4040_pyvisa_arb import HMP4040PyVISA
 import time
 
 RESOURCE = "ASRL/dev/cu.usbmodemVCP1094011::INSTR"
