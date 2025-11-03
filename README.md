@@ -68,22 +68,16 @@ If `list_resources()` returns nothing on macOS, use the ASRL device path (e.g. `
 
 ## Quick Start
   - Example scripts are in the [examples/](examples/) folder:
-  - `example_single_pulse.py`: Single-channel pulsed electrolysis  
   - `run_multi_short.py`: Quick multi-channel test  
   - `run_multi_long.py`: Long autonomous multi-channel run  
   - `test_multi_enable_debug.py`: Output verification test
 
-1. Run single-channel example:
-```bash
-python3 example_single_pulse.py
-```
-
-2. Run a short multi-channel test (inspect LEDs and CSV output):
+1. Run a short multi-channel test (inspect LEDs and CSV output, also works with single channel):
 ```bash
 python3 run_multi_short.py
 ```
 
-3. For long runs, tweak `run_multi_long.py` params (dt, autosave_interval_s) and test with inert loads first.
+2. For long runs, tweak `run_multi_long.py` params (dt, autosave_interval_s) and test with inert loads first.
 
 ## 🛟 Safety notes
 - ALWAYS test with an inert resistive load before connecting electrochemical cells.
