@@ -4,7 +4,7 @@
 Long (8h-oriented) multi-channel pulsed experiment example.
 Use conservative settings and test with inert load before running cells.
 """
-from hmp4040_pyvisa_v3_arb import HMP4040PyVISA
+from hmp4040_pyvisa_arb import HMP4040PyVISA
 import time, signal, sys
 
 RESOURCE = "ASRL/dev/cu.usbmodemVCP1094011::INSTR"
