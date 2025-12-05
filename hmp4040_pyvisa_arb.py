@@ -397,11 +397,30 @@ class HMP4040PyVISA:
 
         return df
         
-    # ---------------- SHUTOFF Powersupply ----------------    
+    # ---------------- SHUTDOWN POWERSUPPLY ----------------    
     def disable_all_outputs(self):
-        """Safely disables output on all channels without assuming channel count."""
+        """
+        Safely disables all outputs on the HMP4040.
+    
+        Uses a generic approach assuming max 4 channels (HMP4040 spec).
+        Silently ignores errors if a channel is unavailable or already off.
+        """
+        print("🔌 Disabling all PSU outputs...")
+    
         try:
-            for ch in range(1, 5):  # HMP4040 has 
+            for ch in range(1, 5):  # HMP4040 supports up to 4 channels
+                try:
+                    self.select_channel(ch)
+                    self.write("OUTP OFF")
+                    time.sleep(0.1)  # Prevent command flooding
+                except Exception:
+                    # Ignore channels that may not exist or errors caused by state
+                    pass
+    
+            print("✅ All outputs switched OFF.")
+        except Exception as e:
+            print(f"⚠️ Error while disabling outputs: {e}")
+
 
 
     # ---------------- Close ----------------
