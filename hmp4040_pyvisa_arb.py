@@ -396,6 +396,12 @@ class HMP4040PyVISA:
             plt.show()
 
         return df
+        
+    # ---------------- SHUTOFF Powersupply ----------------    
+    def disable_all_outputs(self):
+        """Safely disables output on all channels without assuming channel count."""
+        try:
+            for ch in range(1, 5):  # HMP4040 has 
 
 
     # ---------------- Close ----------------
