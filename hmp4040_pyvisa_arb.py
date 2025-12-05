@@ -206,18 +206,20 @@ class HMP4040PyVISA:
         plot: bool = True,
         out_dir: str = ".",
         verbose_enable_debug: bool = False,
+        stop_flag= None  # <-- New: function returning True if user wants to stop
     ) -> pd.DataFrame:
         """
         Multi-channel pulsed experiment (simultaneous, interleaved polling).
-        channels: dict keyed by channel number (1..4). Each value is a dict:
-          { "mode": "current"|"voltage", "pulse_level": float, "pulse_duration": float,
-            "rest_level": float, "rest_duration": float, "target_charge_C": float,
-            optional: "pulse_voltage_compliance","pulse_current_limit","rest_current_limit" }
-        dt: sampling timestep (s) — choose >= 0.2s for USB reliability; for long runs use 0.5s or 1s.
-        autosave_interval_s: how often to save intermediate CSV (None to disable)
-        verbose_enable_debug: if True, helper prints enable attempts and SYST:ERR? replies.
+    
+        stop_flag: callable returning True to request safe stop (e.g., from SIGINT)
         """
-        # validation
+        import os
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import time
+        from datetime import datetime
+    
+        # --- validate input ---
         if not isinstance(channels, dict) or not channels:
             raise ValueError("channels must be a non-empty dict keyed by channel number")
         for ch, cfg in channels.items():
@@ -232,7 +234,7 @@ class HMP4040PyVISA:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = os.path.join(out_dir, f"{experiment_name}_{timestamp}.csv")
     
-        # per-channel state init
+        # --- initialize per-channel state ---
         state = {}
         for ch, cfg in channels.items():
             state[ch] = {
@@ -243,7 +245,6 @@ class HMP4040PyVISA:
                 "enabled": False,
                 "last_enable_resp": None,
             }
-            # ensure outputs off to start clean
             try:
                 self.output_off(ch)
             except Exception:
@@ -254,19 +255,21 @@ class HMP4040PyVISA:
         last_autosave = time.time()
     
         print(f"Starting multi-channel pulsed experiment ({experiment_name}) channels={list(channels.keys())}")
+    
         try:
             while True:
+                if stop_flag is not None and stop_flag():
+                    print("\n🔚 Stop requested — exiting experiment loop safely.")
+                    break
+    
                 all_done = True
     
-                # 1) Apply setpoints for each channel according to its phase (do this first)
+                # --- Apply setpoints ---
                 for ch, s in state.items():
                     cfg = s["cfg"]
                     if s["charge"] >= cfg["target_charge_C"]:
-                        # ensure output off for finished channels
-                        try:
-                            self.output_off(ch)
-                        except Exception:
-                            pass
+                        try: self.output_off(ch)
+                        except Exception: pass
                         s["enabled"] = False
                         continue
                     all_done = False
@@ -274,15 +277,14 @@ class HMP4040PyVISA:
     
                     if s["phase"] == "pulse":
                         if mode == "current":
-                            # set voltage compliance first if provided, then current
                             if cfg.get("pulse_voltage_compliance") is not None:
                                 self.set_voltage(ch, cfg["pulse_voltage_compliance"])
                             self.set_current_limit(ch, cfg["pulse_level"])
-                        else:  # voltage mode
+                        else:
                             if cfg.get("pulse_current_limit") is not None:
                                 self.set_current_limit(ch, cfg["pulse_current_limit"])
                             self.set_voltage(ch, cfg["pulse_level"])
-                    else:  # rest
+                    else:
                         if mode == "current":
                             self.set_current_limit(ch, cfg["rest_level"])
                         else:
@@ -290,20 +292,21 @@ class HMP4040PyVISA:
                                 self.set_current_limit(ch, cfg["rest_current_limit"])
                             self.set_voltage(ch, cfg["rest_level"])
     
-                # 2) Try to enable all active channels and verify enable state
+                # --- Enable all active channels ---
                 for ch, s in state.items():
                     cfg = s["cfg"]
                     if s["charge"] >= cfg["target_charge_C"]:
                         continue
-                    ok, resp = self._verify_and_enable_channel(ch, retries=4, settle_short=0.08, verbose=verbose_enable_debug)
+                    ok, resp = self._verify_and_enable_channel(
+                        ch, retries=4, settle_short=0.08, verbose=verbose_enable_debug
+                    )
                     s["enabled"] = ok
                     s["last_enable_resp"] = resp
-                    # if not ok, we still continue (we record and warn), but measurement will show if channel is sourcing
     
-                # 3) Wait dt (gives instruments time to settle before measurement)
+                # --- Wait dt ---
                 time.sleep(dt)
     
-                # 4) Measure each channel once and update state
+                # --- Measure channels ---
                 for ch, s in state.items():
                     cfg = s["cfg"]
                     if s["charge"] >= cfg["target_charge_C"]:
@@ -313,28 +316,27 @@ class HMP4040PyVISA:
                         v_meas = self.measure_voltage(ch)
                         i_meas = self.measure_current(ch)
                     except Exception as exc:
-                        # on transient VISA errors, attempt one quick retry
                         try:
                             time.sleep(0.05)
                             v_meas = self.measure_voltage(ch)
                             i_meas = self.measure_current(ch)
                         except Exception:
-                            # if still failing, record NaNs and continue
                             v_meas = float("nan")
                             i_meas = float("nan")
                             if verbose_enable_debug:
                                 print(f"ch{ch} measurement error: {exc}")
-                    # integrate charge (if current measurement valid)
+    
+                    # integrate charge
                     try:
-                        # guard if measurement returned nan
-                        if not (isinstance(i_meas, float) and (i_meas != i_meas)):  # NaN check
+                        if not (i_meas != i_meas):  # NaN check
                             s["charge"] += float(i_meas) * dt
                     except Exception:
                         pass
+    
                     data.append([ch, t_rel, v_meas, i_meas, s["charge"], s["phase"]])
                     print(f"ch{ch} {s['phase']:5s} t={t_rel:.1f}s V={v_meas:.3f} V I={i_meas:.3f} A Q={s['charge']:.4f} C")
     
-                    # Check per-channel phase transition
+                    # --- Phase transition ---
                     now = time.time()
                     elapsed = now - s["phase_start"]
                     if s["phase"] == "pulse" and elapsed >= cfg["pulse_duration"]:
@@ -344,7 +346,7 @@ class HMP4040PyVISA:
                         s["phase"] = "pulse"
                         s["phase_start"] = now
     
-                # 5) Autosave periodically
+                # --- Autosave ---
                 if autosave_interval_s and (time.time() - last_autosave) >= autosave_interval_s:
                     df_temp = pd.DataFrame(data, columns=["channel", "time_s", "voltage_V", "current_A", "charge_C", "phase"])
                     metadata = {"timestamp": timestamp, "experiment_name": experiment_name, "partial_save": True}
@@ -352,49 +354,46 @@ class HMP4040PyVISA:
                     print(f"Autosaved intermediate data to {filename}")
                     last_autosave = time.time()
     
-                # 6) Break if all channels finished
                 if all_done:
                     break
     
-        except KeyboardInterrupt:
-            print("Experiment interrupted by user — saving partial data.")
         finally:
-            # ensure all outputs off for safety
-            for ch in state.keys():
-                try:
-                    self.output_off(ch)
-                except Exception:
-                    pass
+            # --- Final cleanup ---
+            print("\n🧹 Final cleanup: disabling all outputs...")
+            try:
+                self.disable_all_outputs()
+                print("✔️ All outputs switched OFF")
+            except Exception as e:
+                print(f"⚠️ Could not disable outputs: {e}")
     
-        # finalize and save full log
-        df = pd.DataFrame(data, columns=["channel", "time_s", "voltage_V", "current_A", "charge_C", "phase"])
-        metadata = {"timestamp": timestamp, "experiment_name": experiment_name, "channels": channels, "dt_s": dt}
-        self._save_with_metadata(df, filename, metadata)
-        print(f"Saved final multi-channel log to {filename}")
+            df = pd.DataFrame(data, columns=["channel", "time_s", "voltage_V", "current_A", "charge_C", "phase"])
+            metadata = {"timestamp": timestamp, "experiment_name": experiment_name, "channels": channels, "dt_s": dt}
+            self._save_with_metadata(df, filename, metadata)
+            print(f"💾 Saved final log to {filename}")
     
-        # plotting
-        if plot and len(df):
-            channels_list = sorted(channels.keys())
-            n_ch = len(channels_list)
-            fig, axes = plt.subplots(n_ch, 1, figsize=(10, 3 * n_ch), sharex=True)
-            if n_ch == 1:
-                axes = [axes]
-            for ax, ch in zip(axes, channels_list):
-                subdf = df[df["channel"] == ch]
-                ax_v = ax
-                ax_i = ax_v.twinx()
-                ax_v.plot(subdf["time_s"], subdf["voltage_V"], label="Voltage (V)")
-                ax_i.plot(subdf["time_s"], subdf["current_A"], label="Current (A)", linestyle="--")
-                ax_v.set_ylabel("Voltage (V)")
-                ax_i.set_ylabel("Current (A)")
-                ax.set_title(f"Channel {ch}")
-                l1, lab1 = ax_v.get_legend_handles_labels()
-                l2, lab2 = ax_i.get_legend_handles_labels()
-                ax_v.legend(l1 + l2, lab1 + lab2, loc="upper right")
-            axes[-1].set_xlabel("Time (s)")
-            plt.tight_layout()
-            plt.show()
-
+            # --- Plot ---
+            if plot and len(df):
+                channels_list = sorted(channels.keys())
+                n_ch = len(channels_list)
+                import matplotlib.pyplot as plt
+                fig, axes = plt.subplots(n_ch, 1, figsize=(10, 3 * n_ch), sharex=True)
+                if n_ch == 1: axes = [axes]
+                for ax, ch in zip(axes, channels_list):
+                    subdf = df[df["channel"] == ch]
+                    ax_v = ax
+                    ax_i = ax_v.twinx()
+                    ax_v.plot(subdf["time_s"], subdf["voltage_V"], label="Voltage (V)")
+                    ax_i.plot(subdf["time_s"], subdf["current_A"], label="Current (A)", linestyle="--")
+                    ax_v.set_ylabel("Voltage (V)")
+                    ax_i.set_ylabel("Current (A)")
+                    ax.set_title(f"Channel {ch}")
+                    l1, lab1 = ax_v.get_legend_handles_labels()
+                    l2, lab2 = ax_i.get_legend_handles_labels()
+                    ax_v.legend(l1 + l2, lab1 + lab2, loc="upper right")
+                axes[-1].set_xlabel("Time (s)")
+                plt.tight_layout()
+                plt.show()
+    
         return df
         
     # ---------------- SHUTDOWN POWERSUPPLY ----------------    
