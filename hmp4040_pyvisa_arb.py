@@ -193,208 +193,186 @@ class HMP4040PyVISA:
             f.write("\n".join(meta_lines) + "\n")
             df.to_csv(f, index=False)
 
+# ---------------- Pulsed experiment ----------------
+def run_pulsed_experiment_multi(
+    self,
+    channels: dict,
+    dt: float = 0.5,
+    autosave_interval_s: float = 600,
+    experiment_name: str = "multi_pulse",
+    plot: bool = True,
+    out_dir: str = ".",
+    verbose_enable_debug: bool = False,
+    stop_flag=None
+):
+    """
+    Multi-channel pulsed experiment (simultaneous, interleaved polling).
+    stop_flag: callable returning True to request safe stop (e.g., from SIGINT)
+    """
+    import os, pandas as pd, matplotlib.pyplot as plt, time
+    from datetime import datetime
 
+    # --- validate input ---
+    if not isinstance(channels, dict) or not channels:
+        raise ValueError("channels must be a non-empty dict keyed by channel number")
 
-    
-    # ---------------- Pulsed experiment ----------------
-    def run_pulsed_experiment_multi(
-        self,
-        channels: dict,
-        dt: float = 0.5,
-        autosave_interval_s: float = 600,
-        experiment_name: str = "multi_pulse",
-        plot: bool = True,
-        out_dir: str = ".",
-        verbose_enable_debug: bool = False,
-        stop_flag= None  # <-- New: function returning True if user wants to stop
-    ) -> pd.DataFrame:
-        """
-        Multi-channel pulsed experiment (simultaneous, interleaved polling).
-    
-        stop_flag: callable returning True to request safe stop (e.g., from SIGINT)
-        """
-        import os
-        import pandas as pd
-        import matplotlib.pyplot as plt
-        import time
-        from datetime import datetime
-    
-        # --- validate input ---
-        if not isinstance(channels, dict) or not channels:
-            raise ValueError("channels must be a non-empty dict keyed by channel number")
-        for ch, cfg in channels.items():
-            if ch not in (1, 2, 3, 4):
-                raise ValueError(f"invalid channel: {ch}")
-            if "mode" not in cfg or cfg["mode"] not in ("current", "voltage"):
-                raise ValueError(f"channel {ch}: mode must be 'current' or 'voltage'")
-            for key in ("pulse_level", "pulse_duration", "rest_level", "rest_duration", "target_charge_C"):
-                if key not in cfg:
-                    raise ValueError(f"channel {ch}: missing required param '{key}'")
-    
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = os.path.join(out_dir, f"{experiment_name}_{timestamp}.csv")
-    
-        # --- initialize per-channel state ---
-        state = {}
-        for ch, cfg in channels.items():
-            state[ch] = {
-                "cfg": cfg,
-                "charge": 0.0,
-                "phase": "pulse",
-                "phase_start": time.time(),
-                "enabled": False,
-                "last_enable_resp": None,
-            }
-            try:
-                self.output_off(ch)
-            except Exception:
-                pass
-    
-        data = []
-        t0 = time.time()
-        last_autosave = time.time()
-    
-        print(f"Starting multi-channel pulsed experiment ({experiment_name}) channels={list(channels.keys())}")
-    
-        try:
-            while True:
-                if stop_flag is not None and stop_flag():
-                    print("\n🔚 Stop requested — exiting experiment loop safely.")
-                    break
-    
-                all_done = True
-    
-                # --- Apply setpoints ---
-                for ch, s in state.items():
-                    cfg = s["cfg"]
-                    if s["charge"] >= cfg["target_charge_C"]:
-                        try: self.output_off(ch)
-                        except Exception: pass
-                        s["enabled"] = False
-                        continue
-                    all_done = False
-                    mode = cfg["mode"].lower()
-    
-                    if s["phase"] == "pulse":
-                        if mode == "current":
-                            if cfg.get("pulse_voltage_compliance") is not None:
-                                self.set_voltage(ch, cfg["pulse_voltage_compliance"])
-                            self.set_current_limit(ch, cfg["pulse_level"])
-                        else:
-                            if cfg.get("pulse_current_limit") is not None:
-                                self.set_current_limit(ch, cfg["pulse_current_limit"])
-                            self.set_voltage(ch, cfg["pulse_level"])
+    for ch, cfg in channels.items():
+        if ch not in (1, 2, 3, 4):
+            raise ValueError(f"invalid channel: {ch}")
+        if "mode" not in cfg or cfg["mode"] not in ("current", "voltage"):
+            raise ValueError(f"channel {ch}: mode must be 'current' or 'voltage'")
+        for key in ("pulse_level", "pulse_duration", "rest_level", "rest_duration", "target_charge_C"):
+            if key not in cfg:
+                raise ValueError(f"channel {ch}: missing required param '{key}'")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = os.path.join(out_dir, f"{experiment_name}_{timestamp}.csv")
+
+    # --- initialize per-channel state ---
+    state = {}
+    for ch, cfg in channels.items():
+        state[ch] = {
+            "cfg": cfg,
+            "charge": 0.0,
+            "phase": "pulse",
+            "phase_start": time.time(),
+            "enabled": False,
+            "last_enable_resp": None,
+        }
+        try: self.output_off(ch)
+        except Exception: pass
+
+    data = []
+    t0 = time.time()
+    last_autosave = time.time()
+
+    print(f"Starting multi-channel pulsed experiment ({experiment_name}) channels={list(channels.keys())}")
+
+    try:
+        while True:
+
+            if stop_flag is not None and stop_flag():
+                print("\n🔚 Stop requested — exiting experiment loop safely.")
+                break
+
+            all_done = True
+
+            # ==============================
+            # 🔧 Apply Pulse or Rest Setpoints
+            # ==============================
+            for ch, s in state.items():
+                cfg = s["cfg"]
+
+                if s["charge"] >= cfg["target_charge_C"]:
+                    try: self.output_off(ch)
+                    except Exception: pass
+                    s["enabled"] = False
+                    continue
+
+                all_done = False
+                mode = cfg["mode"].lower()
+
+                # --------- PULSE PHASE ----------
+                if s["phase"] == "pulse":
+                    if mode == "current":
+                        if cfg.get("pulse_voltage_compliance") is not None:
+                            self.set_voltage(ch, cfg["pulse_voltage_compliance"])
+                        self.set_current_limit(ch, cfg["pulse_level"])
                     else:
-                        if mode == "current":
-                            self.set_current_limit(ch, cfg["rest_level"])
-                        else:
-                            if cfg.get("rest_current_limit") is not None:
-                                self.set_current_limit(ch, cfg["rest_current_limit"])
-                            self.set_voltage(ch, cfg["rest_level"])
-    
-                # --- Enable all active channels ---
-                for ch, s in state.items():
-                    cfg = s["cfg"]
-                    if s["charge"] >= cfg["target_charge_C"]:
-                        continue
-                    ok, resp = self._verify_and_enable_channel(
-                        ch, retries=4, settle_short=0.08, verbose=verbose_enable_debug
-                    )
-                    s["enabled"] = ok
-                    s["last_enable_resp"] = resp
-    
-                # --- Wait dt ---
-                time.sleep(dt)
-    
-                # --- Measure channels ---
-                for ch, s in state.items():
-                    cfg = s["cfg"]
-                    if s["charge"] >= cfg["target_charge_C"]:
-                        continue
-                    try:
-                        t_rel = time.time() - t0
-                        v_meas = self.measure_voltage(ch)
-                        i_meas = self.measure_current(ch)
-                    except Exception as exc:
-                        try:
-                            time.sleep(0.05)
-                            v_meas = self.measure_voltage(ch)
-                            i_meas = self.measure_current(ch)
-                        except Exception:
-                            v_meas = float("nan")
-                            i_meas = float("nan")
+                        if cfg.get("pulse_current_limit") is not None:
+                            self.set_current_limit(ch, cfg["pulse_current_limit"])
+                        self.set_voltage(ch, cfg["pulse_level"])
+
+                # --------- REST PHASE ----------
+                else:
+                    if mode == "current":
+                        if cfg["rest_level"] < 0.001:  # < 1 mA → FLOAT MODE
+                            self.set_voltage(ch, 0.0)
+
+                            clamp = cfg.get(
+                                "rest_current_limit",
+                                cfg.get("pulse_voltage_compliance", 0.05)
+                            )
+                            self.set_current_limit(ch, clamp)
+
                             if verbose_enable_debug:
-                                print(f"ch{ch} measurement error: {exc}")
-    
-                    # integrate charge
-                    try:
-                        if not (i_meas != i_meas):  # NaN check
-                            s["charge"] += float(i_meas) * dt
-                    except Exception:
-                        pass
-    
-                    data.append([ch, t_rel, v_meas, i_meas, s["charge"], s["phase"]])
-                    print(f"ch{ch} {s['phase']:5s} t={t_rel:.1f}s V={v_meas:.3f} V I={i_meas:.3f} A Q={s['charge']:.4f} C")
-    
-                    # --- Phase transition ---
-                    now = time.time()
-                    elapsed = now - s["phase_start"]
-                    if s["phase"] == "pulse" and elapsed >= cfg["pulse_duration"]:
-                        s["phase"] = "rest"
-                        s["phase_start"] = now
-                    elif s["phase"] == "rest" and elapsed >= cfg["rest_duration"]:
-                        s["phase"] = "pulse"
-                        s["phase_start"] = now
-    
-                # --- Autosave ---
-                if autosave_interval_s and (time.time() - last_autosave) >= autosave_interval_s:
-                    df_temp = pd.DataFrame(data, columns=["channel", "time_s", "voltage_V", "current_A", "charge_C", "phase"])
-                    metadata = {"timestamp": timestamp, "experiment_name": experiment_name, "partial_save": True}
-                    self._save_with_metadata(df_temp, filename, metadata)
-                    print(f"Autosaved intermediate data to {filename}")
-                    last_autosave = time.time()
-    
-                if all_done:
-                    break
-    
-        finally:
-            # --- Final cleanup ---
-            print("\n🧹 Final cleanup: disabling all outputs...")
-            try:
-                self.disable_all_outputs()
-                print("✔️ All outputs switched OFF")
-            except Exception as e:
-                print(f"⚠️ Could not disable outputs: {e}")
-    
-            df = pd.DataFrame(data, columns=["channel", "time_s", "voltage_V", "current_A", "charge_C", "phase"])
-            metadata = {"timestamp": timestamp, "experiment_name": experiment_name, "channels": channels, "dt_s": dt}
-            self._save_with_metadata(df, filename, metadata)
-            print(f"💾 Saved final log to {filename}")
-    
-            # --- Plot ---
-            if plot and len(df):
-                channels_list = sorted(channels.keys())
-                n_ch = len(channels_list)
-                import matplotlib.pyplot as plt
-                fig, axes = plt.subplots(n_ch, 1, figsize=(10, 3 * n_ch), sharex=True)
-                if n_ch == 1: axes = [axes]
-                for ax, ch in zip(axes, channels_list):
-                    subdf = df[df["channel"] == ch]
-                    ax_v = ax
-                    ax_i = ax_v.twinx()
-                    ax_v.plot(subdf["time_s"], subdf["voltage_V"], label="Voltage (V)")
-                    ax_i.plot(subdf["time_s"], subdf["current_A"], label="Current (A)", linestyle="--")
-                    ax_v.set_ylabel("Voltage (V)")
-                    ax_i.set_ylabel("Current (A)")
-                    ax.set_title(f"Channel {ch}")
-                    l1, lab1 = ax_v.get_legend_handles_labels()
-                    l2, lab2 = ax_i.get_legend_handles_labels()
-                    ax_v.legend(l1 + l2, lab1 + lab2, loc="upper right")
-                axes[-1].set_xlabel("Time (s)")
-                plt.tight_layout()
+                                print(f"[CH{ch}] REST → FLOAT MODE (0V, CC clamp {clamp} A)")
+                        else:
+                            self.set_current_limit(ch, cfg["rest_level"])
+                    else:
+                        if cfg.get("rest_current_limit") is not None:
+                            self.set_current_limit(ch, cfg["rest_current_limit"])
+                        self.set_voltage(ch, cfg["rest_level"])
+
+            # Enable channels
+            for ch, s in state.items():
+                if s["charge"] >= s["cfg"]["target_charge_C"]:
+                    continue
+                ok, resp = self._verify_and_enable_channel(
+                    ch, retries=4, settle_short=0.08, verbose=verbose_enable_debug
+                )
+                s["enabled"] = ok
+                s["last_enable_resp"] = resp
+
+            time.sleep(dt)
+
+            # --- measurement loop ---
+            for ch, s in state.items():
+                if s["charge"] >= s["cfg"]["target_charge_C"]:
+                    continue
+
+                t_rel = time.time() - t0
+
+                try:
+                    v_meas = self.measure_voltage(ch)
+                    i_meas = self.measure_current(ch)
+                except:
+                    v_meas = float("nan")
+                    i_meas = float("nan")
+
+                if not (i_meas != i_meas):
+                    s["charge"] += float(i_meas) * dt
+
+                data.append([ch, t_rel, v_meas, i_meas, s["charge"], s["phase"]])
+                print(f"CH{ch} {s['phase']:5s} t={t_rel:.1f}s  V={v_meas:.3f}  I={i_meas:.4f}  Q={s['charge']:.4f}")
+
+                elapsed = time.time() - s["phase_start"]
+                if s["phase"] == "pulse" and elapsed >= cfg["pulse_duration"]:
+                    s["phase"] = "rest"; s["phase_start"] = time.time()
+                elif s["phase"] == "rest" and elapsed >= cfg["rest_duration"]:
+                    s["phase"] = "pulse"; s["phase_start"] = time.time()
+
+            if autosave_interval_s and (time.time() - last_autosave) >= autosave_interval_s:
+                df_temp = pd.DataFrame(data, columns=["channel", "time_s", "voltage_V", "current_A", "charge_C", "phase"])
+                self._save_with_metadata(df_temp, filename, {"timestamp": timestamp, "partial_save": True})
+                print(f"Autosaved intermediate data → {filename}")
+                last_autosave = time.time()
+
+            if all_done:
+                break
+
+    finally:
+        print("\n🧹 Final cleanup...")
+        try: self.disable_all_outputs()
+        except: pass
+
+        df = pd.DataFrame(data, columns=["channel", "time_s", "voltage_V", "current_A", "charge_C", "phase"])
+        self._save_with_metadata(df, filename, {"timestamp": timestamp, "experiment_name": experiment_name})
+        print(f"💾 Saved final data → {filename}")
+
+        if plot and len(df):
+            import matplotlib.pyplot as plt
+            for ch in sorted(channels.keys()):
+                sub = df[df.channel == ch]
+                plt.figure(figsize=(10,4))
+                plt.title(f"Channel {ch}")
+                plt.plot(sub.time_s, sub.voltage_V, label="Voltage")
+                plt.plot(sub.time_s, sub.current_A, "--", label="Current")
+                plt.legend(); plt.xlabel("Time (s)")
                 plt.show()
-    
-        return df
+
+    return df
+
         
     # ---------------- SHUTDOWN POWERSUPPLY ----------------    
     def disable_all_outputs(self):
